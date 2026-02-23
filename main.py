@@ -10,7 +10,7 @@ from faster_whisper import WhisperModel
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.model = WhisperModel("medium", device="auto", compute_type="default")
+    app.state.model = WhisperModel("small", device="auto", compute_type="default")
     yield
 
 
