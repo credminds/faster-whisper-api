@@ -1,11 +1,11 @@
 [project]
-name = "whisper"
+name = "parakeet-asr"
 version = "0.1.0"
-description = "Add your description here"
+description = "Speech-to-Text API using NVIDIA Parakeet-TDT-1.1b"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.131.0",
-    "faster-whisper>=1.2.1",
+    "nemo_toolkit[asr]",
     "python-multipart>=0.0.22",
     "uvicorn>=0.41.0",
 ]

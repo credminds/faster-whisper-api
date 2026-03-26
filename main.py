@@ -5,12 +5,19 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import StreamingResponse
-from faster_whisper import WhisperModel
+import nemo.collections.asr as nemo_asr
+import soundfile as sf
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.model = WhisperModel("small", device="auto", compute_type="default")
+    asr_model = nemo_asr.models.EncDecRNNTBPEModel.from_pretrained(
+        model_name="nvidia/parakeet-tdt-1.1b"
+    )
+    asr_model.change_attention_model(
+        "rel_pos_local_attn", att_context_size=[256, 256]
+    )
+    app.state.model = asr_model
     yield
 
 
@@ -29,17 +36,27 @@ def save_upload_to_temp(upload: UploadFile) -> str:
 async def transcribe(file: UploadFile = File(...)):
     tmp_path = save_upload_to_temp(file)
     try:
-        segments_gen, info = app.state.model.transcribe(tmp_path)
+        output = app.state.model.transcribe([tmp_path], timestamps=True)
+        result = output[0]
+
+        full_text = result.text
         segments = []
-        full_text_parts = []
-        for seg in segments_gen:
-            segments.append({"start": seg.start, "end": seg.end, "text": seg.text.strip()})
-            full_text_parts.append(seg.text.strip())
+        if result.timestamp and "segment" in result.timestamp:
+            for ts in result.timestamp["segment"]:
+                segments.append({
+                    "start": ts["start"],
+                    "end": ts["end"],
+                    "text": ts["segment"].strip(),
+                })
+
+        audio_info = sf.info(tmp_path)
+        duration = audio_info.duration
+
         return {
-            "text": " ".join(full_text_parts),
+            "text": full_text,
             "segments": segments,
-            "language": info.language,
-            "duration": info.duration,
+            "language": "en",
+            "duration": duration,
         }
     finally:
         os.unlink(tmp_path)
@@ -51,11 +68,22 @@ async def transcribe_stream(file: UploadFile = File(...)):
 
     def generate():
         try:
-            segments_gen, info = app.state.model.transcribe(tmp_path)
-            for seg in segments_gen:
-                data = json.dumps({"start": seg.start, "end": seg.end, "text": seg.text.strip()})
-                yield f"data: {data}\n\n"
-            done = json.dumps({"done": True, "language": info.language, "duration": info.duration})
+            output = app.state.model.transcribe([tmp_path], timestamps=True)
+            result = output[0]
+
+            audio_info = sf.info(tmp_path)
+            duration = audio_info.duration
+
+            if result.timestamp and "segment" in result.timestamp:
+                for ts in result.timestamp["segment"]:
+                    data = json.dumps({
+                        "start": ts["start"],
+                        "end": ts["end"],
+                        "text": ts["segment"].strip(),
+                    })
+                    yield f"data: {data}\n\n"
+
+            done = json.dumps({"done": True, "language": "en", "duration": duration})
             yield f"data: {done}\n\n"
         finally:
             os.unlink(tmp_path)
@@ -65,4 +93,4 @@ async def transcribe_stream(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8004)
+    uvicorn.run(app, host="0.0.0.0", port=8010)
